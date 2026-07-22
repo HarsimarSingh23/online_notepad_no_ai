@@ -186,6 +186,99 @@
   .choice span { font-size: 12px; color: var(--muted); }
   .remember { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-top: 4px; color: var(--muted); }
   .modal .reset { font-size: 11px; color: var(--muted); background: none; border: none; cursor: pointer; margin-top: 6px; text-decoration: underline; }
+
+  /* JSON tree panel */
+  .editor-wrap { position: relative; }
+  .json-panel {
+    position: absolute;
+    inset: 0;
+    background: var(--panel);
+    display: none;
+    flex-direction: column;
+    z-index: 20;
+  }
+  .json-panel.open { display: flex; }
+  .json-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .json-head .title { font-size: 13px; font-weight: 600; }
+  .json-head .badge { font-size: 11px; color: var(--muted); }
+  .json-head .grow { flex: 1; }
+  .json-head button {
+    font: inherit; font-size: 12px; color: var(--ink);
+    background: transparent; border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 8px; cursor: pointer;
+  }
+  .json-head button:hover { background: var(--tab-idle); }
+  .json-search {
+    font: inherit; font-size: 12px; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 8px; width: 150px;
+  }
+  .json-body {
+    flex: 1;
+    overflow: auto;
+    padding: 10px 8px 10px 12px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .json-error {
+    padding: 16px 20px;
+    color: #c0392b;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 13px;
+    white-space: pre-wrap;
+  }
+  @media (prefers-color-scheme: dark) { .json-error { color: #ff8a7a; } }
+
+  .jn { list-style: none; margin: 0; padding: 0; }
+  .jrow {
+    display: flex;
+    align-items: flex-start;
+    border-radius: 4px;
+    padding: 1px 4px;
+    cursor: default;
+  }
+  .jrow:hover { background: var(--tab-idle); }
+  .jrow.match { background: rgba(240,200,60,0.28); }
+  .jcaret {
+    width: 14px;
+    flex: none;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+    text-align: center;
+  }
+  .jcaret.leaf { visibility: hidden; }
+  .jkey { color: var(--ink); }
+  .jkey::after { content: ": "; color: var(--muted); }
+  .jsep { color: var(--muted); }
+  .jchildren { margin: 0; padding-left: 16px; list-style: none; border-left: 1px dotted var(--line); }
+  .jcount { color: var(--muted); font-style: normal; margin-left: 6px; font-size: 11px; }
+  .v-str { color: #2f8f4f; }
+  .v-num { color: #2b6fb3; }
+  .v-bool { color: #8a5cd1; }
+  .v-null { color: var(--muted); }
+  @media (prefers-color-scheme: dark) {
+    .v-str { color: #82c99a; } .v-num { color: #7ab6e6; } .v-bool { color: #b493e8; }
+  }
+  .json-foot {
+    border-top: 1px solid var(--line);
+    padding: 4px 12px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    color: var(--muted);
+    min-height: 22px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 </style>
 </head>
 <body>
@@ -200,6 +293,9 @@
     <button data-cmd="font-dec" title="Smaller text (Ctrl/Cmd+-)">A−</button>
     <button data-cmd="font-inc" title="Bigger text (Ctrl/Cmd+=)">A+</button>
     <button data-cmd="font-reset" title="Reset text size">A↺</button>
+    <span class="sep"></span>
+    <button data-cmd="json-format" title="Pretty-print JSON (Ctrl/Cmd+Shift+F)">{ } Format</button>
+    <button data-cmd="json-tree" title="JSON tree view (Ctrl/Cmd+J)">⌘J Tree</button>
     <span class="spacer"></span>
     <span class="hint">Saved locally · no cloud, no tracking</span>
   </div>
@@ -208,6 +304,20 @@
 
   <div class="editor-wrap">
     <textarea id="editor" spellcheck="true" placeholder="Start typing…"></textarea>
+    <div class="json-panel" id="json-panel">
+      <div class="json-head">
+        <span class="title">JSON</span>
+        <span class="badge" id="json-badge"></span>
+        <input class="json-search" id="json-search" type="search" placeholder="Filter keys/values…" spellcheck="false">
+        <span class="grow"></span>
+        <button id="json-expand">Expand all</button>
+        <button id="json-collapse">Collapse all</button>
+        <button id="json-copy">Copy</button>
+        <button id="json-close" title="Close (Esc)">✕ Close</button>
+      </div>
+      <div class="json-body" id="json-body"></div>
+      <div class="json-foot" id="json-foot"></div>
+    </div>
   </div>
 
   <div class="statusbar">
@@ -387,6 +497,8 @@
     else if (cmd === "font-inc") fontPx = applyFont(fontPx + 1);
     else if (cmd === "font-dec") fontPx = applyFont(fontPx - 1);
     else if (cmd === "font-reset") fontPx = applyFont(15);
+    else if (cmd === "json-format") formatJson();
+    else if (cmd === "json-tree") toggleJsonTree();
   });
 
   function clipboard(action) {
@@ -429,10 +541,13 @@
   document.addEventListener("keydown", function (e) {
     var mod = e.metaKey || e.ctrlKey;
     if (!mod) return;
-    if (e.key === "t") { e.preventDefault(); newDoc(); }
+    var k = e.key.toLowerCase();
+    if (k === "t") { e.preventDefault(); newDoc(); }
     else if (e.key === "=" || e.key === "+") { e.preventDefault(); fontPx = applyFont(fontPx + 1); }
     else if (e.key === "-") { e.preventDefault(); fontPx = applyFont(fontPx - 1); }
     else if (e.key === "0") { e.preventDefault(); fontPx = applyFont(15); }
+    else if (k === "j") { e.preventDefault(); toggleJsonTree(); }
+    else if (k === "f" && e.shiftKey) { e.preventDefault(); formatJson(); }
   });
 
   // Persist on unload as a safety net
@@ -497,6 +612,222 @@
     }
     // "single": nothing to do — everything already lives in these tabs.
   }
+
+  // ---------- JSON viewer ----------
+  var jsonPanel = document.getElementById("json-panel");
+  var jsonBody = document.getElementById("json-body");
+  var jsonBadge = document.getElementById("json-badge");
+  var jsonFoot = document.getElementById("json-foot");
+  var jsonSearch = document.getElementById("json-search");
+
+  // Parse, tolerating a leading BOM / whitespace. Returns {ok,value} or {ok:false,error}.
+  function parseJson(text) {
+    try { return { ok: true, value: JSON.parse(text) }; }
+    catch (err) { return { ok: false, error: err.message, raw: text }; }
+  }
+
+  // Pretty-print the current note in place (2-space indent).
+  function formatJson() {
+    var res = parseJson(editor.value);
+    if (!res.ok) {
+      markSaved("⚠ invalid JSON");
+      if (jsonPanel.classList.contains("open")) renderJson();
+      else flashError(res.error);
+      return;
+    }
+    var pretty = JSON.stringify(res.value, null, 2);
+    if (pretty !== editor.value) {
+      editor.value = pretty;
+      onInput();
+      persist();
+      markSaved("formatted");
+    }
+    if (jsonPanel.classList.contains("open")) renderJson();
+  }
+
+  function flashError(msg) {
+    var prev = statSaved.textContent;
+    statSaved.textContent = "JSON error: " + msg;
+    setTimeout(function () { statSaved.textContent = prev; }, 3000);
+  }
+
+  function toggleJsonTree() {
+    if (jsonPanel.classList.contains("open")) closeJsonTree();
+    else openJsonTree();
+  }
+  function openJsonTree() {
+    jsonPanel.classList.add("open");
+    renderJson();
+  }
+  function closeJsonTree() {
+    jsonPanel.classList.remove("open");
+    jsonBody.textContent = "";   // free the tree DOM — keeps memory low when closed
+    jsonFoot.textContent = "";
+    editor.focus();
+  }
+
+  function typeOf(v) {
+    if (v === null) return "null";
+    if (Array.isArray(v)) return "array";
+    return typeof v;
+  }
+
+  // Build a single collapsible row. Children render lazily on first expand.
+  function makeNode(key, value, path) {
+    var t = typeOf(value);
+    var li = document.createElement("li");
+    var row = document.createElement("div");
+    row.className = "jrow";
+    row.dataset.path = path;
+
+    var caret = document.createElement("span");
+    caret.className = "jcaret";
+    row.appendChild(caret);
+
+    if (key !== null) {
+      var kEl = document.createElement("span");
+      kEl.className = "jkey";
+      kEl.textContent = key;
+      row.appendChild(kEl);
+    }
+
+    var isContainer = (t === "object" || t === "array");
+    if (isContainer) {
+      var keys = Object.keys(value);
+      var open = t === "array" ? "[" : "{";
+      var close = t === "array" ? "]" : "}";
+      caret.textContent = keys.length ? "▸" : "·";
+      var summary = document.createElement("span");
+      summary.className = "jsep";
+      summary.textContent = open + (keys.length ? " … " + close : close);
+      var count = document.createElement("span");
+      count.className = "jcount";
+      count.textContent = keys.length + (t === "array" ? " items" : " keys");
+      row.appendChild(summary);
+      row.appendChild(count);
+
+      var kids = document.createElement("ul");
+      kids.className = "jchildren";
+      kids.style.display = "none";
+      var built = false;
+
+      function build() {
+        if (built) return;
+        built = true;
+        var frag = document.createDocumentFragment();
+        keys.forEach(function (k) {
+          var childPath = t === "array" ? path + "[" + k + "]" : path + "." + k;
+          frag.appendChild(makeNode(t === "array" ? String(k) : k, value[k], childPath));
+        });
+        kids.appendChild(frag);
+      }
+      function setOpen(o) {
+        if (o && keys.length) { build(); kids.style.display = ""; caret.textContent = "▾"; summary.textContent = open; }
+        else { kids.style.display = "none"; caret.textContent = keys.length ? "▸" : "·"; summary.textContent = open + (keys.length ? " … " + close : close); }
+      }
+      caret.addEventListener("click", function (e) { e.stopPropagation(); setOpen(kids.style.display === "none"); });
+      row.addEventListener("click", function () { setOpen(kids.style.display === "none"); });
+      li._setOpen = setOpen;
+      li._hasKids = keys.length > 0;
+
+      li.appendChild(row);
+      li.appendChild(kids);
+    } else {
+      caret.classList.add("leaf");
+      var val = document.createElement("span");
+      if (t === "string") { val.className = "v-str"; val.textContent = JSON.stringify(value); }
+      else if (t === "number") { val.className = "v-num"; val.textContent = String(value); }
+      else if (t === "boolean") { val.className = "v-bool"; val.textContent = String(value); }
+      else { val.className = "v-null"; val.textContent = "null"; }
+      row.appendChild(val);
+      li.appendChild(row);
+    }
+
+    // Footer shows the path of whatever row you hover — cheap, no state kept.
+    row.addEventListener("mouseenter", function () { jsonFoot.textContent = path; });
+    return li;
+  }
+
+  function renderJson() {
+    jsonBody.textContent = "";
+    jsonFoot.textContent = "";
+    var res = parseJson(editor.value);
+    if (editor.value.trim() === "") {
+      jsonBadge.textContent = "";
+      jsonBody.innerHTML = '<div class="json-error" style="color:var(--muted)">This note is empty. Paste JSON here, then press ⌘/Ctrl+J.</div>';
+      return;
+    }
+    if (!res.ok) {
+      jsonBadge.textContent = "invalid";
+      var el = document.createElement("div");
+      el.className = "json-error";
+      el.textContent = "Not valid JSON:\n" + res.error;
+      jsonBody.appendChild(el);
+      return;
+    }
+    var t = typeOf(res.value);
+    jsonBadge.textContent = t;
+    var ul = document.createElement("ul");
+    ul.className = "jn";
+    var root = makeNode(null, res.value, "$");
+    ul.appendChild(root);
+    jsonBody.appendChild(ul);
+    // Auto-expand the root so users see structure immediately.
+    if (root._setOpen && root._hasKids) root._setOpen(true);
+  }
+
+  // Expand / collapse every already-built node; expanding builds lazily as it goes.
+  function walkAll(open) {
+    var items = jsonBody.querySelectorAll("li");
+    // Expanding must go top-down so parents build their children first.
+    var list = Array.prototype.slice.call(items);
+    if (!open) list.reverse();
+    list.forEach(function (li) { if (li._setOpen) li._setOpen(open); });
+    if (open) {
+      // Newly built descendants also need opening; one more pass covers a deep tree.
+      jsonBody.querySelectorAll("li").forEach(function (li) { if (li._setOpen) li._setOpen(true); });
+    }
+  }
+
+  document.getElementById("json-expand").addEventListener("click", function () { walkAll(true); });
+  document.getElementById("json-collapse").addEventListener("click", function () { walkAll(false); });
+  document.getElementById("json-close").addEventListener("click", closeJsonTree);
+  document.getElementById("json-copy").addEventListener("click", function () {
+    var res = parseJson(editor.value);
+    var text = res.ok ? JSON.stringify(res.value, null, 2) : editor.value;
+    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
+      .then(function () { jsonFoot.textContent = "copied formatted JSON to clipboard"; })
+      .catch(function () { jsonFoot.textContent = "copy failed"; });
+  });
+
+  // Live filter: highlight rows whose key/value matches; expand to reveal them.
+  var searchTimer = null;
+  jsonSearch.addEventListener("input", function () {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(applyFilter, 120);
+  });
+  function applyFilter() {
+    var q = jsonSearch.value.trim().toLowerCase();
+    jsonBody.querySelectorAll(".jrow.match").forEach(function (r) { r.classList.remove("match"); });
+    if (!q) return;
+    // Expand everything so matches deeper in the tree are actually in the DOM.
+    walkAll(true);
+    var hits = 0;
+    jsonBody.querySelectorAll(".jrow").forEach(function (r) {
+      if (r.textContent.toLowerCase().indexOf(q) !== -1) { r.classList.add("match"); hits++; }
+    });
+    var first = jsonBody.querySelector(".jrow.match");
+    if (first) first.scrollIntoView({ block: "center" });
+    jsonFoot.textContent = hits + " match" + (hits === 1 ? "" : "es");
+  }
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && jsonPanel.classList.contains("open")) {
+      // Let Escape clear the search box first, otherwise close the panel.
+      if (document.activeElement === jsonSearch && jsonSearch.value) { jsonSearch.value = ""; applyFilter(); }
+      else closeJsonTree();
+    }
+  });
 
   // ---------- Boot ----------
   renderTabs();
